@@ -4,13 +4,13 @@ from discord.ext import commands, tasks
 import datetime
 import sqlite3
 import random
-import os  # [보안 필수] 시스템 환경 변수를 불러오기 위한 라이브러리 추가
+import os  # Render 금고에서 비밀번호를 꺼내오기 위한 보안 라이브러리
 
-# 디스코드 봇 설정 (모든 권한 허용)
+# 디스코드 봇 설정
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 데이터베이스 초기화
+# 데이터베이스 초기화 및 테이블 확장
 conn = sqlite3.connect("gga_warn.db")
 cursor = conn.cursor()
 cursor.execute("""
@@ -20,40 +20,58 @@ CREATE TABLE IF NOT EXISTS warnings (
     last_warn_date TEXT
 )
 """)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS punishment_settings (
+    level INTEGER PRIMARY KEY,
+    warn_required INTEGER,
+    punish_type TEXT,
+    description TEXT
+)
+""")
+cursor.execute("INSERT OR IGNORE INTO punishment_settings VALUES (1, 7, 'timeout', '타임아웃 7일')")
+cursor.execute("INSERT OR IGNORE INTO punishment_settings VALUES (2, 14, 'kick_7', '서버 강퇴 7일')")
+cursor.execute("INSERT OR IGNORE INTO punishment_settings VALUES (3, 20, 'kick_meeting', '중각 회의 후 강퇴')")
+cursor.execute("INSERT OR IGNORE INTO punishment_settings VALUES (4, 30, 'ban', '영구 차단(BAN)')")
 conn.commit()
 
 @bot.event
 async def on_ready():
-    print(f"[{bot.user.name}] GGA 군신 협치제 제재 시스템 가동.")
+    print(f"[{bot.user.name}] GGA 군신 협치제 제재 시스템 2.0 가동.")
     await bot.tree.sync()
     auto_warn_deduction.start()
 
-# [함수] 경고 수치에 따른 자동 제재 및 알림 시스템
+# 유동적 처벌 집행 함수
 async def check_and_execute_punishment(interaction: discord.Interaction, member: discord.Member, total_warns: int):
-    if total_warns >= 30:
-        embed = discord.Embed(title="💀 최고 제재 집행 (영구 차단)", color=discord.Color.red())
-        embed.description = f"{member.mention} 유저가 **경고 {total_warns}회** 누적으로 인해 즉시 서버에서 **영구 차단(BAN)** 되었습니다."
-        await interaction.channel.send(embed=embed)
-        await member.ban(reason=f"GGA 규정 위반 - 경고 {total_warns}회 누적")
-        
-    elif total_warns >= 20:
-        embed = discord.Embed(title="🔴 중등 제재 집행 (서버 강퇴)", color=0xff0000)
-        embed.description = f"{member.mention} 유저가 **경고 {total_warns}회**에 도달했습니다.\n\n⚠️ **[집행 지침]** 중각 회의 후 즉시 강퇴 처리 예정이며, 10일 후 그마 권한으로만 재가입이 가능합니다."
-        await interaction.channel.send(embed=embed)
-        await member.kick(reason=f"경고 {total_warns}회 누적 (20회 도달)")
-
-    elif total_warns >= 14:
-        embed = discord.Embed(title="🟠 경고 14회 도달 (서버 강퇴 7일)", color=0xffa500)
-        embed.description = f"{member.mention} 유저가 **경고 {total_warns}회**에 도달하여 서버에서 강퇴 처리되었습니다.\n\n📌 **[안내]** 우회 접속 시 기간이 초기화되며, 7일 후 중각이 제공하는 특별 링크로만 재입장 가능합니다."
-        await interaction.channel.send(embed=embed)
-        await member.kick(reason=f"경고 {total_warns}회 누적 (14회 도달)")
-
-    elif total_warns >= 7:
-        duration = datetime.timedelta(days=7)
-        await member.timeout(duration, reason=f"경고 {total_warns}회 누적 (7회 도달)")
-        embed = discord.Embed(title="🟡 경고 7회 도달 (타임아웃 7일)", color=0xffff00)
-        embed.description = f"{member.mention} 유저가 **경고 {total_warns}회**에 도달하여 일주일 동안 채팅 및 음성 채널 이용이 금지(타임아웃)되었습니다."
-        await interaction.channel.send(embed=embed)
+    cursor.execute("SELECT warn_required, punish_type, description FROM punishment_settings ORDER BY warn_required DESC")
+    settings = cursor.fetchall()
+    
+    for warn_required, punish_type, description in settings:
+        if total_warns >= warn_required:
+            if punish_type == 'ban':
+                embed = discord.Embed(title="💀 최고 제재 집행 (영구 차단)", color=discord.Color.red())
+                embed.description = f"{member.mention} 유저가 **경고 {total_warns}회** 누적으로 인해 즉시 서버에서 **영구 차단(BAN)** 되었습니다.\n기준: {description}"
+                await interaction.channel.send(embed=embed)
+                await member.ban(reason=f"GGA 규정 위반 - 경고 {total_warns}회 누적")
+                return
+            elif punish_type == 'kick_meeting':
+                embed = discord.Embed(title="🔴 중등 제재 집행 (서버 강퇴)", color=0xff0000)
+                embed.description = f"{member.mention} 유저가 **경고 {total_warns}회**에 도달했습니다.\n\n⚠️ **[집행 지침]** 중각 회의 후 즉시 강퇴 처리 예정이며, 10일 후 그마 권한으로만 재가입이 가능합니다.\n기준: {description}"
+                await interaction.channel.send(embed=embed)
+                await member.kick(reason=f"경고 {total_warns}회 누적")
+                return
+            elif punish_type == 'kick_7':
+                embed = discord.Embed(title="🟠 경고 도달 (서버 강퇴 7일)", color=0xffa500)
+                embed.description = f"{member.mention} 유저가 **경고 {total_warns}회**에 도달하여 서버에서 강퇴 처리되었습니다.\n\n📌 **[안내]** 7일 후 중각이 제공하는 특별 링크로만 재입장 가능합니다.\n기준: {description}"
+                await interaction.channel.send(embed=embed)
+                await member.kick(reason=f"경고 {total_warns}회 누적")
+                return
+            elif punish_type == 'timeout':
+                duration = datetime.timedelta(days=7)
+                await member.timeout(duration, reason=f"경고 {total_warns}회 누적")
+                embed = discord.Embed(title="🟡 경고 도달 (타임아웃 7일)", color=0xffff00)
+                embed.description = f"{member.mention} 유저가 **경고 {total_warns}회**에 도달하여 일주일 동안 채팅 및 음성 이용이 금지되었습니다.\n기준: {description}"
+                await interaction.channel.send(embed=embed)
+                return
 
 # 1. [/경고] 명령어
 @bot.tree.command(name="경고", description="유저에게 경고를 부여합니다 (중각 이상 권한)")
@@ -72,10 +90,83 @@ async def give_warn(interaction: discord.Interaction, 유저: discord.Member, �
         cursor.execute("UPDATE warnings SET warn_count = ?, last_warn_date = ? WHERE user_id = ?", (total_warns, current_time, 유저.id))
     conn.commit()
     
-    await interaction.response.send_message(f"⚠️ **{유저.mention} 유저에게 경고 {횟수}회를 부여했습니다.** (현재 누적: {total_warns}회)\n📅 30일 모범 유저 타이머가 오늘부터 리셋됩니다.")
+    await interaction.response.send_message(f"⚠️ **{유저.mention} 유저에게 경고 {횟수}회를 부여했습니다.** (현재 누적: {total_warns}회)\n📅 30일 모범 유저 타이머가 리셋됩니다.")
     await check_and_execute_punishment(interaction, 유저, total_warns)
 
-# 2. [/강제처벌] 명령어
+# 2. [/경고확인] 명령어
+@bot.tree.command(name="경고확인", description="특정 유저의 경고 수치와 마지막 경고 날짜를 확인합니다.")
+@app_commands.describe(유저="조회할 유저 선택")
+async def check_warn(interaction: discord.Interaction, 유저: discord.Member):
+    cursor.execute("SELECT warn_count, last_warn_date FROM warnings WHERE user_id = ?", (유저.id,))
+    row = cursor.fetchone()
+    
+    if row is None or row[0] == 0:
+        await interaction.response.send_message(f"✅ {유저.mention} 유저는 현재 누적된 경고가 없는 깨끗한 모범 유저입니다.")
+    else:
+        embed = discord.Embed(title=f"📋 {유저.display_name} 유저 제재 상태 보고서", color=0x00ff00)
+        embed.add_field(name="⚠️ 누적 경고 횟수", value=f"**{row[0]}회**", inline=True)
+        embed.add_field(name="📅 마지막 갱신일", value=f"{row[1]}", inline=True)
+        await interaction.response.send_message(embed=embed)
+
+# 3. [/경고목록] 명령어
+@bot.tree.command(name="경고목록", description="서버 내에서 경고를 1회 이상 받은 모든 유저의 리스트를 출력합니다.")
+@commands.has_permissions(manage_messages=True)
+async def list_warns(interaction: discord.Interaction):
+    cursor.execute("SELECT user_id, warn_count FROM warnings WHERE warn_count > 0 ORDER BY warn_count DESC")
+    rows = cursor.fetchall()
+    
+    if not rows:
+        await interaction.response.send_message("🕊️ 현재 서버에 경고를 받은 유저가 단 한 명도 없습니다! 평화로운 상태입니다.")
+        return
+        
+    embed = discord.Embed(title="🚨 GGA 서버 블랙리스트 (경고 누적 명단)", color=0x000000)
+    description_text = ""
+    
+    for index, row in enumerate(rows, start=1):
+        member = interaction.guild.get_member(row[0])
+        member_name = member.mention if member else f"서버를 나간 유저({row[0]})"
+        description_text += f"**{index}위.** {member_name} — ⚠️ **{row[1]}회**\n"
+        
+    embed.description = description_text
+    await interaction.response.send_message(embed=embed)
+
+# 4. [/경고차감] 명령어
+@bot.tree.command(name="경고차감", description="잘못 부여했거나 반성한 유저의 경고를 깎아줍니다 (중각 이상 권한)")
+@app_commands.describe(유저="경고를 깎아줄 유저 선택", 횟수="차감할 경고 횟수")
+@commands.has_permissions(manage_messages=True)
+async def remove_warn(interaction: discord.Interaction, 유저: discord.Member, 횟수: int):
+    cursor.execute("SELECT warn_count FROM warnings WHERE user_id = ?", (유저.id,))
+    row = cursor.fetchone()
+    
+    if row is None or row[0] == 0:
+        await interaction.response.send_message(f"❌ {유저.mention} 유저는 깎을 경고가 없습니다 (현재 0회)", ephemeral=True)
+        return
+        
+    new_warns = max(0, row[0] - 횟수)
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("UPDATE warnings SET warn_count = ?, last_warn_date = ? WHERE user_id = ?", (new_warns, current_time, 유저.id))
+    conn.commit()
+    
+    await interaction.response.send_message(f"💚 **사면 집행:** {유저.mention} 유저의 경고를 {횟수}회 차감했습니다. (현재 누적: {new_warns}회)")
+
+# 5. [/처벌변경] 명령어
+@bot.tree.command(name="처벌변경", description="경고 수치에 따른 처벌 기준 시스템을 수정합니다 (그마 전용 권한)")
+@app_commands.describe(단계="수정할 처벌 단계 선택", 필요한경고수="처벌이 내려질 경고 컷수")
+@app_commands.choices(단계=[
+    app_commands.Choice(name="1단계 (노랑-타임아웃)", value=1),
+    app_commands.Choice(name="2단계 (주황-강퇴7일)", value=2),
+    app_commands.Choice(name="3단계 (빨강-회의강퇴)", value=3),
+    app_commands.Choice(name="4단계 (해골-영구차단)", value=4)
+])
+@commands.has_permissions(administrator=True)
+async def change_punishment(interaction: discord.Interaction, 단계: int, 필요한경고수: int):
+    cursor.execute("UPDATE punishment_settings SET warn_required = ? WHERE level = ?", (필요한경고수, 단계))
+    conn.commit()
+    
+    names = {1: "1단계 (타임아웃)", 2: "2단계 (서버강퇴 7일)", 3: "3단계 (중각회의 후 강퇴)", 4: "4단계 (영구 차단)"}
+    await interaction.response.send_message(f"⚙️ **군신 협치제 법률 개정:** 이제부터 **[{names[단계]}]** 처벌 기준이 누적 경고 **{필요한경고수}회** 이상일 때로 변경됩니다.")
+
+# 6. [/강제처벌] 명령어
 @bot.tree.command(name="강제처벌", description="유저에게 즉각적인 특수 처벌을 내립니다.")
 @app_commands.describe(유저="처벌할 유저 선택", 처벌이름="처벌 종류 선택")
 @app_commands.choices(처벌이름=[
@@ -94,10 +185,10 @@ async def force_punish(interaction: discord.Interaction, 유저: discord.Member,
             return
         roles_to_remove = [r for r in 유저.roles if r.name in ["중각", "외각"]]
         await 유저.remove_roles(*roles_to_remove)
-        await r.add_roles(user_role)
+        await 유저.add_roles(user_role)
         await interaction.response.send_message(f"🛡️ **직권 계급 해임:** {유저.mention} 운영진의 권한을 박탈하고 일반 **[{user_role.name}]** 계급으로 강등 변경하였습니다.")
 
-# 3. [자동 감시 시스템]
+# 7. [자동 감시 시스템]
 @tasks.loop(hours=24)
 async def auto_warn_deduction():
     current_time = datetime.datetime.now()
@@ -115,5 +206,5 @@ async def auto_warn_deduction():
             cursor.execute("UPDATE warnings SET warn_count = ?, last_warn_date = ? WHERE user_id = ?", (new_warn_count, new_time_str, user_id))
     conn.commit()
 
-# [보안 100%] 이제 깃허브에는 글자만 보이고, 진짜 토큰은 Render 서버가 내부에서만 안전하게 조립해 실행합니다.
+# [보안 절대 사수] 진짜 토큰 문자열은 인터넷이 아닌 Render 사이트 비밀 금고에만 넣어둡니다.
 bot.run(os.environ['DISCORD_TOKEN'])
