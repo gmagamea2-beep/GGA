@@ -4,6 +4,7 @@ from discord.ext import commands, tasks
 import datetime
 import sqlite3
 import random
+import os  # [보안 필수] 시스템 환경 변수를 불러오기 위한 라이브러리 추가
 
 # 디스코드 봇 설정 (모든 권한 허용)
 intents = discord.Intents.all()
@@ -93,7 +94,7 @@ async def force_punish(interaction: discord.Interaction, 유저: discord.Member,
             return
         roles_to_remove = [r for r in 유저.roles if r.name in ["중각", "외각"]]
         await 유저.remove_roles(*roles_to_remove)
-        await 유저.add_roles(user_role)
+        await r.add_roles(user_role)
         await interaction.response.send_message(f"🛡️ **직권 계급 해임:** {유저.mention} 운영진의 권한을 박탈하고 일반 **[{user_role.name}]** 계급으로 강등 변경하였습니다.")
 
 # 3. [자동 감시 시스템]
@@ -114,5 +115,5 @@ async def auto_warn_deduction():
             cursor.execute("UPDATE warnings SET warn_count = ?, last_warn_date = ? WHERE user_id = ?", (new_warn_count, new_time_str, user_id))
     conn.commit()
 
-# 봇 실행 (줄 맨 왼쪽에 딱 붙여두었습니다!)
-bot.run("MTUwNTU0OTMxNzU2NDQwMzc3Mg.GK91Qb.RuzF0PaLMBBXTO6CKYBBty-SpswM9IKhyg8S0w")
+# [보안 100%] 이제 깃허브에는 글자만 보이고, 진짜 토큰은 Render 서버가 내부에서만 안전하게 조립해 실행합니다.
+bot.run(os.environ['DISCORD_TOKEN'])
