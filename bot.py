@@ -5,6 +5,24 @@ import datetime
 import sqlite3
 import random
 import os  # Render 금고에서 비밀번호를 꺼내오기 위한 보안 라이브러리
+from flask import Flask  # [추가] Render 포트 우회용 웹서버 라이브러리
+from threading import Thread  # [추가] 봇과 웹서버를 동시에 돌리기 위한 라이브러리
+
+# --- [신규] Render 포트 강제 유지용 Flask 웹서버 세팅 ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "GGA Bot is Online! 24/7 Guard Active."
+
+def run():
+    # Render는 기본적으로 10000번 포트를 스캔하므로 10000번으로 열어줍니다.
+    app.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+# ----------------------------------------------------
 
 # 디스코드 봇 설정
 intents = discord.Intents.all()
@@ -206,5 +224,6 @@ async def auto_warn_deduction():
             cursor.execute("UPDATE warnings SET warn_count = ?, last_warn_date = ? WHERE user_id = ?", (new_warn_count, new_time_str, user_id))
     conn.commit()
 
-# [보안 절대 사수] 진짜 토큰 문자열은 인터넷이 아닌 Render 사이트 비밀 금고에만 넣어둡니다.
+# [보안 절대 사수] 가짜 포트용 가상 웹서버를 먼저 켜고 디스코드 로그인 진행
+keep_alive()
 bot.run(os.environ['DISCORD_TOKEN'])
